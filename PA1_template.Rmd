@@ -49,9 +49,16 @@ intervalSteps <- actMon %>%
 ```
 
 The average steps within each interval
-```{r}
-with( intervalSteps, plot( interval, steps/daysCollected, type="l" ))
+```{r echo=FALSE}
+with( intervalSteps, plot( interval, 
+                           steps/daysCollected, 
+                           type="l", 
+                           xlab="Interval",
+                           ylab="Average steps per day"))
 ```
+
+The interval that contains, on average, the maximum number of steps is
+`r intervalSteps[with(intervalSteps, which.max(steps/daysCollected, na.rm=TRUE) ),1]`
 
 ## Imputing missing values
 
