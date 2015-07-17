@@ -8,34 +8,36 @@ output:
 
 ## Loading and preprocessing the data
 
-Make sure we have the needed packages loaded - this analysis requires dplyr and ggplot2
-```{r libs,results='hide'}
-if ( !(require(dplyr) &&require(ggplot2)) ) {
+Make sure we have the needed packages loaded - this analysis requires dplyr, lubridate and ggplot2
+```{r libs,results='hide',message=FALSE}
+if ( !(require(dplyr) && require(lubridate) && require(ggplot2)) ) {
     stop ("You need to install the dplyr and ggplot2 packages to run this script")
 }
 ```
 
-Unzip and read the activity data file. Convert the date column into a date
+Unzip and read the activity data file. Convert the date column into a date. Keep the interval column as a number, but add a date representaiton
 ```{r}
 actMonRaw <- read.csv( unz('activity.zip','activity.csv'))
 actMon <- tbl_df(actMonRaw) %>%
-    mutate( date = as.Date(date) )
+    mutate( date = as.Date(date) ) 
+actMon$intervalTime=strptime( sprintf("%04d",actMon$interval),  format="%H%M")
 ```
 
 ## What is mean total number of steps taken per day?
 Calculate the number of steps taken each day by taking the sum of the number of steps in each 5 minute interval during the day. Missing values are ignored in this part.
 ```{r}
 dailySteps <- actMon %>%
+    select( -intervalTime ) %>%
     group_by( date ) %>%
     summarize( steps = sum(steps, na.rm=TRUE) )
 ```
 
 Let's see a histogram of the number of steps per day
 ```{r echo=FALSE}
-qplot( steps, data=dailySteps, xlab="Daily Steps", binwidth=max(dailySteps$steps)/50 )
+qplot( steps, data=dailySteps, xlab="Daily Steps", binwidth=max(dailySteps$steps)/50 ) + geom_vline(xintercept=mean(dailySteps$steps), color="green", linetype="longdash")
 ```
 
-The mean number of steps taken each day is `r sprintf("%.2f", mean(dailySteps$steps))`. The median is `r median(dailySteps$steps)`. For calculating these numbers, the number of steps on days with no readings is 0. if we exclude those days the results are `r sprintf("%.2f", mean(dailySteps$steps[dailySteps$steps>0]))` for the mean and `r median(dailySteps$steps[dailySteps$steps>0])` for the median.
+The mean number of steps taken each day is `r sprintf("%.2f", mean(dailySteps$steps))` (shown above). The median is `r median(dailySteps$steps)`. For calculating these numbers, the number of steps on days with no readings is 0. if we exclude those days the results are `r sprintf("%.2f", mean(dailySteps$steps[dailySteps$steps>0]))` for the mean and `r median(dailySteps$steps[dailySteps$steps>0])` for the median.
 
 
 ## What is the average daily activity pattern?
@@ -44,24 +46,78 @@ Find the average number of steps in each 5 minute interval, ignoring missing val
 We'll count the number of days data was actually collected for each interval, and use that in the average.
 ```{r}
 intervalSteps <- actMon %>%
+    select( -intervalTime ) %>%
     group_by( interval ) %>%
     summarize( daysCollected = sum(!is.na(steps)), steps = sum(steps, na.rm=TRUE) )
+intervalSteps$intervalTime=strptime( sprintf("%04d",intervalSteps$interval),  format="%H%M")
 ```
 
 The average steps within each interval
+
 ```{r echo=FALSE}
-with( intervalSteps, plot( interval, 
+with( intervalSteps, plot( intervalTime, 
                            steps/daysCollected, 
                            type="l", 
-                           xlab="Interval",
-                           ylab="Average steps per day"))
+                           xlab="Interval Start Time",
+                           ylab="Average steps in 5-minute interval"))
 ```
 
-The interval that contains, on average, the maximum number of steps is
-`r intervalSteps[with(intervalSteps, which.max(steps/daysCollected, na.rm=TRUE) ),1]`
+The interval that contains, on average, the maximum number of steps starts at 
+`r format(intervalSteps[with(intervalSteps, which.max(steps/daysCollected) ),4], "%H:%M")`.
 
 ## Imputing missing values
 
+There are `r sum(is.na(actMon$steps))` missing values for the step counts. This represents
+`r sprintf("%.2f%%",100*sum(is.na(actMon$steps))/length(actMon$steps))`
+of the data. How do these missing values impact the data? Extracting just the missing values:
+```{r}
+missing <- actMon[is.na(actMon$steps),]
+```
+```{r echo=FALSE}
+hist(missing$interval/100, xlab="Hour", main="Distribution of missing values by hour", breaks=24,xaxp=c(0,24,4))
+```
+
+We observe that the missing values are distributed evenly thoughout the day, with only a slight variation around midnight (when the number of steps is low), so the missing values are assumed to not significantly affect the distribution of steps thoughout the day. How do the missing values distribute over the days?
+
+```{r echo=FALSE}
+hist(missing$date, xlab="Date", main="Distribution of missing values by day", breaks=length(missing$date),freq=TRUE)
+```
+
+Most days do not have any missing values, the ones that do are missing the same number - possibly all 288 of them. We can see the numbers:
+
+```{r}
+table(missing$date)
+```
+
+On the above 8 days no measurements are available. The other days are not missing any readings. This suggests a smoothing, using the mean of the neighboring days, will give reasonable values to impute the missing data - except there are two conditions which prevent such a simple approach:
+
+1. There may be (and in fact, are) two consecutive dates with missing data. To handle this situation, our rule is to take the days before and after, skipping over days with missing data
+1. A day with missing data may be (and in fact, is) the first or last day for data collection. These days may be discarded, since imputing values here would add nothing.
+
+Since we know that if any reading is missing for a day, then all the readings are missing for that day, we can simplify the processing. We start with the boundary conditions, removing rows for the first and last dates until these are not missing the steps reading. The code is also simplified because we know that the data frame is in date order.
+
+First we will copy into a new fram and remove the days at boundaries of the date range where no readings were collected
+
+```{r}
+actMonImp <- actMon
+while ( is.na(actMonImp[1,1]) ) { 
+    removeDate <- actMonImp[1,2]
+    actMonImp <- actMonImp[!(actMonImp$date==removeDate[[1]]),]
+}
+while ( is.na(actMonImp[dim(actMonImp)[1],1]) ) { 
+    removeDate <- actMonImp[dim(actMonImp)[1],2]
+    actMonImp <- actMonImp[!(actMonImp$date==removeDate[[1]]),]
+}
+```
+
+Then we will smooth the remaining missing data with the mean of the readings from the nearest days before and day after that have actual readings
+
+```{r}
+
+```
+
+
+Now make a histogram with the imputed data included and compare the mean and median with the original results
 
 
 ## Are there differences in activity patterns between weekdays and weekends?
