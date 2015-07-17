@@ -110,14 +110,51 @@ while ( is.na(actMonImp[dim(actMonImp)[1],1]) ) {
 }
 ```
 
-Then we will smooth the remaining missing data with the mean of the readings from the nearest days before and day after that have actual readings
+Then we will smooth the remaining missing data with the mean of the readings from the nearest days before and day after that have actual readings. To help with this we will create a vector containing the dates with missing data that we need to impute.
 
 ```{r}
-
+missingDays <- unique(actMonImp[is.na(actMonImp[,1]),2])[[1]]
 ```
 
+Define a helper function to make the code a little clearer. This will return the date with non-missing data closest to the specified date in the indicated direction.
 
-Now make a histogram with the imputed data included and compare the mean and median with the original results
+```{r}
+dayWithData <- function( df, d, dir ) {
+    while ( is.na(df[df$date==d & df$interval==0,1]) ) {
+        d = d + dir*1
+    }
+    
+    d
+}
+```
 
+Loop through the days with missing data and impute using the means of the neighbors. Note that the original (non-imputed) frame is used to determine the neighboring days to use - this avoids having the results affected by application of this step to a prior day in the loop.
+
+```{r}
+for (d in 1:length(missingDays) ) {
+    dayBefore <- dayWithData( actMon, missingDays[d], -1 )
+    dayAfter <-  dayWithData( actMon, missingDays[d], +1 )
+    actMonImp[actMonImp$date==missingDays[d],]$steps =
+        (actMonImp[actMonImp$date==dayBefore,]$steps +
+        actMonImp[actMonImp$date==dayAfter,]$steps) / 2
+}
+```
+
+Now make a histogram with the imputed data included and compare the mean and median with the original results. First we need to recalculate the daily totals.
+
+```{r}
+dailySteps <- actMonImp %>%
+    select( -intervalTime ) %>%
+    group_by( date ) %>%
+    summarize( steps = sum(steps, na.rm=TRUE) )
+```
+
+The histogram of the number of steps per day with the imputed data
+
+```{r echo=FALSE}
+qplot( steps, data=dailySteps, xlab="Daily Steps", binwidth=max(dailySteps$steps)/50 ) + geom_vline(xintercept=mean(dailySteps$steps), color="green", linetype="longdash")
+```
+
+The spike at 0, which was due to the missing data causing the affected days to show a zero total, is gone. The mean number of steps taken each day is `r sprintf("%.2f", mean(dailySteps$steps))` (shown above). The median is `r sprintf("%d", median(dailySteps$steps))`. These are closer to the original values with the missing days excluded than with those daily totals being with as 0, as would be expected.
 
 ## Are there differences in activity patterns between weekdays and weekends?
