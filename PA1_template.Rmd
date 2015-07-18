@@ -8,32 +8,30 @@ output:
 
 ## Loading and preprocessing the data
 
-Make sure we have the needed packages loaded - this analysis requires dplyr, lubridate and ggplot2
+Make sure we have the needed packages loaded - this analysis requires dplyr, lattice and ggplot2
 ```{r libs,results='hide',message=FALSE}
-if ( !(require(dplyr) && require(lubridate) && require(ggplot2)) ) {
-    stop ("You need to install the dplyr and ggplot2 packages to run this script")
+if ( !(require(dplyr) && require(lattice) && require(ggplot2)) ) {
+    stop ("You need to install the dplyr, lattice and ggplot2 packages to run this script")
 }
 ```
 
-Unzip and read the activity data file. Convert the date column into a date. Keep the interval column as a number, but add a date representaiton
+Unzip and read the activity data file. Convert the date column into a date. Keep the interval column as a number, we will add a date representaiton as needed for plotting
 ```{r}
 actMonRaw <- read.csv( unz('activity.zip','activity.csv'))
 actMon <- tbl_df(actMonRaw) %>%
     mutate( date = as.Date(date) ) 
-actMon$intervalTime=strptime( sprintf("%04d",actMon$interval),  format="%H%M")
 ```
 
 ## What is mean total number of steps taken per day?
 Calculate the number of steps taken each day by taking the sum of the number of steps in each 5 minute interval during the day. Missing values are ignored in this part.
 ```{r}
 dailySteps <- actMon %>%
-    select( -intervalTime ) %>%
     group_by( date ) %>%
     summarize( steps = sum(steps, na.rm=TRUE) )
 ```
 
 Let's see a histogram of the number of steps per day
-```{r echo=FALSE}
+```{r stepsRawHistorgram,echo=FALSE}
 qplot( steps, data=dailySteps, xlab="Daily Steps", binwidth=max(dailySteps$steps)/50 ) + geom_vline(xintercept=mean(dailySteps$steps), color="green", linetype="longdash")
 ```
 
@@ -46,7 +44,6 @@ Find the average number of steps in each 5 minute interval, ignoring missing val
 We'll count the number of days data was actually collected for each interval, and use that in the average.
 ```{r}
 intervalSteps <- actMon %>%
-    select( -intervalTime ) %>%
     group_by( interval ) %>%
     summarize( daysCollected = sum(!is.na(steps)), steps = sum(steps, na.rm=TRUE) )
 intervalSteps$intervalTime=strptime( sprintf("%04d",intervalSteps$interval),  format="%H%M")
@@ -54,7 +51,7 @@ intervalSteps$intervalTime=strptime( sprintf("%04d",intervalSteps$interval),  fo
 
 The average steps within each interval
 
-```{r echo=FALSE}
+```{r stepsWithinInterval,echo=FALSE}
 with( intervalSteps, plot( intervalTime, 
                            steps/daysCollected, 
                            type="l", 
@@ -73,13 +70,13 @@ of the data. How do these missing values impact the data? Extracting just the mi
 ```{r}
 missing <- actMon[is.na(actMon$steps),]
 ```
-```{r echo=FALSE}
+```{r missingValuesByInterval,echo=FALSE}
 hist(missing$interval/100, xlab="Hour", main="Distribution of missing values by hour", breaks=24,xaxp=c(0,24,4))
 ```
 
 We observe that the missing values are distributed evenly thoughout the day, with only a slight variation around midnight (when the number of steps is low), so the missing values are assumed to not significantly affect the distribution of steps thoughout the day. How do the missing values distribute over the days?
 
-```{r echo=FALSE}
+```{r missingValuesByDay,echo=FALSE}
 hist(missing$date, xlab="Date", main="Distribution of missing values by day", breaks=length(missing$date),freq=TRUE)
 ```
 
@@ -144,17 +141,48 @@ Now make a histogram with the imputed data included and compare the mean and med
 
 ```{r}
 dailySteps <- actMonImp %>%
-    select( -intervalTime ) %>%
     group_by( date ) %>%
     summarize( steps = sum(steps, na.rm=TRUE) )
 ```
 
 The histogram of the number of steps per day with the imputed data
 
-```{r echo=FALSE}
+```{r stepsImputedHistorgram,echo=FALSE}
 qplot( steps, data=dailySteps, xlab="Daily Steps", binwidth=max(dailySteps$steps)/50 ) + geom_vline(xintercept=mean(dailySteps$steps), color="green", linetype="longdash")
 ```
 
 The spike at 0, which was due to the missing data causing the affected days to show a zero total, is gone. The mean number of steps taken each day is `r sprintf("%.2f", mean(dailySteps$steps))` (shown above). The median is `r sprintf("%d", median(dailySteps$steps))`. These are closer to the original values with the missing days excluded than with those daily totals being with as 0, as would be expected.
 
 ## Are there differences in activity patterns between weekdays and weekends?
+
+Continuing to work with the dataset which includes the imputed missing values, create a new factor variable in the dataset with two levels - "weekday" and "weekend" indicating whether a given date is a weekday or weekend day. Find the average number of steps in each 5 minute interval, grouped by weekdays and weekends. We know, since we imputed all the missing values, that there are no NA's and there is no variation in the number of days data was collected within the weekday and weekend readings, so we only need two number for the denominators
+
+```{r}
+actMonImp$dayType <- factor(
+    ifelse( 
+        weekdays(actMonImp$date, abbreviate=TRUE) %in% c('Sat','Sun'), 
+        'weekend', 
+        'weekday'
+        ) 
+    )
+
+intervalSteps <- actMonImp %>%
+    group_by( dayType, interval ) %>%
+    summarize( steps = sum(steps) )
+intervalSteps$intervalTime=strptime( sprintf("%04d",intervalSteps$interval),  format="%H%M")
+
+daysCollected <- unique(actMonImp[,c(2,4)]) %>%
+    group_by(dayType) %>%
+    summarize(numberDays=length(date))
+```
+
+Let's see how the daily activity patterns compares between weekdays and weekends:
+
+```{r stepsByDaytype,echo=FALSE}
+xyplot( steps/daysCollected$numberDays[unclass(dayType)] ~ interval | dayType, 
+        data=intervalSteps, 
+        type="l", 
+        xlab="Interval",
+        ylab="Number of steps",
+        layout=c(1,2) )
+```
