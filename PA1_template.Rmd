@@ -86,14 +86,24 @@ Most days do not have any missing values, the ones that do are missing the same 
 table(missing$date)
 ```
 
-On the above 8 days no measurements are available. The other days are not missing any readings. This suggests a smoothing, using the mean of the neighboring days, will give reasonable values to impute the missing data - except there are two conditions which prevent such a simple approach:
+On the above 8 days no measurements are available. The other days are not missing any readings. This suggests a smoothing, using the mean of the neighboring days, will give reasonable values to impute the missing data - except there are three conditions which prevent such a simple approach:
 
 1. There may be (and in fact, are) two consecutive dates with missing data. To handle this situation, our rule is to take the days before and after, skipping over days with missing data
 1. A day with missing data may be (and in fact, is) the first or last day for data collection. These days may be discarded, since imputing values here would add nothing.
+1. The neighboring dates may have non-representative data. Consider November 15, the neighnor to a date with missing data (November 14):
+```{r}
+table( actMon[actMon$date=="2012-11-15",1] )
+```
+There are only two 5 minute intervals that date with any movement recorded - possibly a correct reading of the subject's activity, but using this to contribute 50% of an imputed value will amplify the effect of this non-representive day.
+This is not the only date where an unrealistic number of the readings are 0. Consider October 2 (the first date on which any readings are available).
+```{r}
+table( actMon[actMon$date=="2012-10-02",1] )
+```
+We can reduce the impact by smoothing over more neighbors (alternatively the global means for each interval could be used),
 
 Since we know that if any reading is missing for a day, then all the readings are missing for that day, we can simplify the processing. We start with the boundary conditions, removing rows for the first and last dates until these are not missing the steps reading. The code is also simplified because we know that the data frame is in date order.
 
-First we will copy into a new fram and remove the days at boundaries of the date range where no readings were collected
+First we will copy into a new frame and remove the days at boundaries of the date range where no readings were collected
 
 ```{r}
 actMonImp <- actMon
@@ -125,15 +135,19 @@ dayWithData <- function( df, d, dir ) {
 }
 ```
 
-Loop through the days with missing data and impute using the means of the neighbors. Note that the original (non-imputed) frame is used to determine the neighboring days to use - this avoids having the results affected by application of this step to a prior day in the loop.
+Loop through the days with missing data and impute using the means of the two nearest neighbors in each direction. Note that the original (non-imputed) frame is used to determine the neighboring days to use - this avoids having the results affected by application of this step to a prior day in the loop.
 
 ```{r}
 for (d in 1:length(missingDays) ) {
     dayBefore <- dayWithData( actMon, missingDays[d], -1 )
+    twoDaysBefore <- dayWithData( actMon, dayBefore, -1 )
     dayAfter <-  dayWithData( actMon, missingDays[d], +1 )
+    twoDaysAfter <-  dayWithData( actMon, dayAfter, +1 )
     actMonImp[actMonImp$date==missingDays[d],]$steps =
-        (actMonImp[actMonImp$date==dayBefore,]$steps +
-        actMonImp[actMonImp$date==dayAfter,]$steps) / 2
+        (actMonImp[actMonImp$date==twoDaysBefore,]$steps +
+        actMonImp[actMonImp$date==dayBefore,]$steps +
+        actMonImp[actMonImp$date==dayAfter,]$steps +
+        actMonImp[actMonImp$date==twoDaysAfter,]$steps ) / 4
 }
 ```
 
@@ -183,6 +197,6 @@ xyplot( steps/daysCollected$numberDays[unclass(dayType)] ~ interval | dayType,
         data=intervalSteps, 
         type="l", 
         xlab="Interval",
-        ylab="Number of steps",
+        ylab="Number of steps in 5 minutes",
         layout=c(1,2) )
 ```
